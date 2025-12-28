@@ -1,17 +1,24 @@
-from dataclasses import dataclass
-from datetime import datetime
-from src.malfunction.domain.value_objects.ReporterId import ReporterId
-from src.malfunction.domain.value_objects.StationId import StationId
-from src.malfunction.domain.value_objects.IncidentDetails import IncidentDetails
+from dataclasses import dataclass, field
+from uuid import UUID, uuid4
+
+from src.malfunction.domain.value_objects.Email import Email
+from src.malfunction.domain.value_objects.Name import Name
+from src.malfunction.domain.value_objects.StationLabel import StationLabel
+from src.malfunction.domain.value_objects.ProblemDescription import ProblemDescription
 
 
 @dataclass
 class Incident:
-    id: str
-    reporter_id: ReporterId
-    station_id: StationId
-    details: IncidentDetails
-    status: str
-    created_at: datetime
-    resolved_at: datetime | None = None
-    solution: str | None = None
+    """
+    Entity representing one malfunction report.
+    """
+
+    reporter_name: Name
+    reporter_email: Email
+    station_label: StationLabel
+    description: ProblemDescription
+    id: UUID = field(default_factory=uuid4)
+    is_valid: bool = False
+    is_solved: bool = False
+    points_awarded: int = 0
+    status: str = "PENDING"  # PENDING, PUBLISHED, RESOLVED

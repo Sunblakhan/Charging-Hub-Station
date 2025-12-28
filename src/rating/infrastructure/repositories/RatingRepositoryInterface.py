@@ -1,28 +1,25 @@
-from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List
+
 from src.rating.domain.entities.Rating import Rating
-from src.rating.domain.value_objects.UserId import UserId
-from src.rating.domain.value_objects.StationId import StationId
 
 
 class RatingRepositoryInterface(ABC):
-    """Persistence abstraction for ratings."""
+    @abstractmethod
+    def next_id(self) -> str:
+        """Return a new unique rating ID (e.g. UUID as string)."""
+        ...
 
     @abstractmethod
-    def upsert(self, rating: Rating) -> Rating:
-        """Create or replace a rating record and return it."""
+    def all(self) -> List[Rating]:
+        ...
 
     @abstractmethod
-    def get_by_station(self, station_id: StationId) -> List[Rating]:
-        """Return all ratings for a station."""
+    def save(self, rating: Rating) -> None:
+        """Insert a new rating into the database."""
+        ...
 
     @abstractmethod
-    def get_by_user_and_station(
-        self, user_id: UserId, station_id: StationId
-    ) -> Rating | None:
-        """Return the single rating a user left for a station, if any."""
-
-    @abstractmethod
-    def get_average_for_station(self, station_id: StationId) -> float | None:
-        """Return average stars for a station or None if no ratings exist."""
+    def all_for_station(self, station_label: str) -> List[Rating]:
+        """Return all ratings stored for the given station."""
+        ...

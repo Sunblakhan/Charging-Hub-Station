@@ -1,67 +1,105 @@
-"""Integration-style tests for RatingService event flow and persistence."""
-
 import pytest
-from datetime import datetime
 
-from src.rating.domain.value_objects import UserId, StationId, StarRating
-from src.rating.infrastructure.repositories import InMemoryRatingRepository
-from src.infrastructure.EventBus import InMemoryEventBus
-from src.rating.application.services import RatingService
-from src.rating.domain.events import (
-    SelectChargingStation,
-    NewRatingCreated,
-    RatingSubmitted,
-    RatingStored,
-    StationsAvgRatingUpdated,
-    ReviewPublished,
-    RatingMadeVisibleToUsers,
+from src.rating.application.services.RatingService import (
+    RatingService,
+    StationNotInBerlinError,
 )
 
 
-def _find(events, event_type):
-    return [e for e in events if isinstance(e, event_type)]
+def test_create_rating_happy_path(rating_repo, station_lookup):
+    service = RatingService(rating_repo, station_lookup)
 
-
-def test_add_first_rating_happy_path_emits_full_flow():
-    repo = InMemoryRatingRepository()
-    bus = InMemoryEventBus()
-    service = RatingService(repo, bus)
-
-    user = UserId("user-1")
-    station = StationId("station-1")
-
-    service.add_or_update_rating(
-        user_id=user,
-        station_id=station,
-        stars=StarRating(4),
-        text="Good station",
+    result = service.create_rating(
+        user_name="Alice",
+        user_email="alice@example.com",
+        station_label="TotalEnergies Charging Solutions - Storkower Str. 175, 1036 Berlin",
+        stars=4,
+        review_text="good charger",
     )
 
-    # domain result
-    assert repo.get_average_for_station(station) == 4.0
+    assert result["user_name"] == "Alice"
+    assert result["stars"] == 4
+    assert 1 <= result["average_stars"] <= 5
 
-    # events
-    assert _find(bus.published, SelectChargingStation)
-    assert _find(bus.published, NewRatingCreated)
-    assert _find(bus.published, RatingSubmitted)
-    assert _find(bus.published, RatingStored)
-    assert _find(bus.published, StationsAvgRatingUpdated)
-    assert _find(bus.published, ReviewPublished)
-    assert _find(bus.published, RatingMadeVisibleToUsers)
+    # Check DB row exists
+    cur = rating_repo._conn.cursor()  # only in tests
+    cur.execute(
+        "SELECT name, email, station_label, stars, review_text FROM ratings"
+    )
+    row = cur.fetchone()
+    assert row == (
+        "Alice",
+        "alice@example.com",
+        "TotalEnergies Charging Solutions - Storkower Str. 175, 1036 Berlin",
+        4,
+        "good charger",
+    )
+
+def test_station_must_be_in_berlin(rating_repo):
+    # Fake lookup that returns False for everything
+    class RejectAllLookup:
+        def is_station_in_berlin(self, station_label: str) -> bool:
+            return False
+
+    service = RatingService(rating_repo, RejectAllLookup())
+
+    with pytest.raises(StationNotInBerlinError):
+        service.create_rating(
+            user_name="Bob",
+            user_email="bob@example.com",
+            station_label="Albwerk GmbH & Co. KG - Ennabeurer Weg 0, 72535 Heroldstatt",
+            stars=5,
+            review_text=None,
+        )
+
+def test_create_rating_invalid_email_does_not_persist(rating_repo, station_lookup):
+    service = RatingService(rating_repo, station_lookup)
+
+    with pytest.raises(ValueError):
+        service.create_rating(
+            user_name="Alice",
+            user_email="not-an-email",
+            station_label="TotalEnergies Charging Solutions - Storkower Str. 175, 1036 Berlin",
+            stars=4,
+            review_text="ok",
+        )
+
+    # DB must still be empty
+    cur = rating_repo._conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM ratings")
+    count = cur.fetchone()[0]
+    assert count == 0
+
+def test_create_rating_empty_name_does_not_persist(rating_repo, station_lookup):
+    service = RatingService(rating_repo, station_lookup)
+
+    with pytest.raises(ValueError):
+        service.create_rating(
+            user_name="  ",
+            user_email="user@example.com",
+            station_label="TotalEnergies Charging Solutions - Storkower Str. 175, 1036 Berlin",
+            stars=4,
+            review_text="ok",
+        )
+
+    cur = rating_repo._conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM ratings")
+    assert cur.fetchone()[0] == 0
 
 
-def test_update_rating_same_user_station_keeps_single_rating_and_updates_average():
-    repo = InMemoryRatingRepository()
-    bus = InMemoryEventBus()
-    service = RatingService(repo, bus)
+@pytest.mark.parametrize("bad_stars", [0, 6])
+def test_create_rating_invalid_stars_does_not_persist(rating_repo, station_lookup, bad_stars):
+    service = RatingService(rating_repo, station_lookup)
 
-    user = UserId("user-1")
-    station = StationId("station-1")
+    with pytest.raises(ValueError):
+        service.create_rating(
+            user_name="Alice",
+            user_email="alice@example.com",
+            station_label="TotalEnergies Charging Solutions - Storkower Str. 175, 1036 Berlin",
+            stars=bad_stars,
+            review_text="ok",
+        )
 
-    service.add_or_update_rating(user, station, StarRating(3), "ok")
-    service.add_or_update_rating(user, station, StarRating(5), "great")
-
-    ratings = repo.get_by_station(station)
-    assert len(ratings) == 1
-    assert ratings[0].stars.value == 5
-    assert repo.get_average_for_station(station) == 5.0
+    cur = rating_repo._conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM ratings")
+    assert cur.fetchone()[0] == 0

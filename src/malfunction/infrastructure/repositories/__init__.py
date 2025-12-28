@@ -1,4 +1,3 @@
-from .IncidentRepositoryInterface import IncidentRepositoryInterface
-from .InMemoryIncidentRepository import InMemoryIncidentRepository
+from .IncidentRepository import IncidentRepository
 
-__all__ = ["IncidentRepositoryInterface", "InMemoryIncidentRepository"]
+__all__ = ["IncidentRepository"]

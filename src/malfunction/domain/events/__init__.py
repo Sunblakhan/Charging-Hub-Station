@@ -1,12 +1,12 @@
-from .MalfunctionReportOpenedEvent import MalfunctionReportOpenedEvent as MalfunctionReportOpened
-from .DetailsEnteredEvent import DetailsEnteredEvent as DetailsEntered
-from .ReportValidatedAndSubmittedEvent import ReportValidatedAndSubmittedEvent as ReportValidatedAndSubmitted
-from .ReportNotifiedToAdminAndOperatorEvent import ReportNotifiedToAdminAndOperatorEvent as ReportNotifiedToAdminAndOperator
-from .ReportPublishedToUsersEvent import ReportPublishedToUsersEvent as ReportPublishedToUsers
-from .WarningDisplayedToAllUsersEvent import WarningDisplayedToAllUsersEvent as WarningDisplayedToAllUsers
-from .PointsAwardedToReporterEvent import PointsAwardedToReporterEvent as PointsAwardedToReporter
-from .SolutionProvidedEvent import SolutionProvidedEvent as SolutionProvided
-from .IssuesStatusUpdateReportEvent import IssuesStatusUpdateReportEvent as IssuesStatusUpdateReport
+from .MalfunctionReportOpened import MalfunctionReportOpened
+from .DetailsEntered import DetailsEntered
+from .ReportValidatedAndSubmitted import ReportValidatedAndSubmitted
+from .ReportNotifiedToAdminAndOperator import ReportNotifiedToAdminAndOperator
+from .ReportPublishedToUsers import ReportPublishedToUsers
+from .WarningDisplayedToAllUsers import WarningDisplayedToAllUsers
+from .PointsAwardedToReporter import PointsAwardedToReporter
+from .SolutionProvided import SolutionProvided
+from .IssuesStatusUpdateReport import IssuesStatusUpdateReport
 
 __all__ = [
     "MalfunctionReportOpened",

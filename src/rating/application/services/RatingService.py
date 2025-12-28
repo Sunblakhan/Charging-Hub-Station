@@ -1,110 +1,86 @@
-from __future__ import annotations
-from datetime import datetime
-from uuid import uuid4
+# src/rating/application/services/RatingService.py
+from typing import Dict, Any
 
-from src.rating.domain.entities.Rating import Rating
-from src.rating.domain.value_objects.UserId import UserId
-from src.rating.domain.value_objects.StationId import StationId
-from src.rating.domain.value_objects.StarRating import StarRating
-from src.rating.domain.events.SelectChargingStationEvent import SelectChargingStationEvent
-from src.rating.domain.events.NewRatingCreatedEvent import NewRatingCreatedEvent
-from src.rating.domain.events.RatingValidatedEvent import RatingValidatedEvent
-from src.rating.domain.events.RatingSubmittedEvent import RatingSubmittedEvent
-from src.rating.domain.events.RatingStoredEvent import RatingStoredEvent
-from src.rating.domain.events.StationsAvgRatingUpdatedEvent import (
-    StationsAvgRatingUpdatedEvent,
-)
-from src.rating.domain.events.ReviewPublishedEvent import ReviewPublishedEvent
-from src.rating.domain.events.RatingMadeVisibleToUsersEvent import (
-    RatingMadeVisibleToUsersEvent,
-)
+from src.rating.domain.aggregates.RatingAggregate import RatingAggregate
 from src.rating.infrastructure.repositories.RatingRepositoryInterface import (
     RatingRepositoryInterface,
 )
-from src.infrastructure.EventBus import InMemoryEventBus
+from src.rating.application.services.station_lookup import StationLookupInterface
+
+
+class StationNotInBerlinError(Exception):
+    pass
 
 
 class RatingService:
-    """Application service to create or update ratings and emit domain events."""
+    """
+    Application service for the 'create rating' use case.
+    """
 
     def __init__(
         self,
-        repository: RatingRepositoryInterface,
-        event_bus: InMemoryEventBus,
+        repo: RatingRepositoryInterface,
+        station_lookup: StationLookupInterface,
     ) -> None:
-        """Wire up repository and event bus dependencies."""
-        self._repo = repository
-        self._events = event_bus
+        self._repo = repo
+        self._station_lookup = station_lookup
 
-    def add_or_update_rating(
+    def create_rating(
         self,
-        user_id: UserId,
-        station_id: StationId,
-        stars: StarRating,
-        text: str | None = None,
-    ) -> Rating:
+        user_name: str,
+        user_email: str,
+        station_label: str,
+        stars: int,
+        review_text: str | None,
+    ) -> Dict[str, Any]:
         """
-        Upsert a rating for a user/station, publish the rating lifecycle events,
-        and return the persisted rating.
+        Orchestrates the use case:
+        1. Check station is in Berlin.
+        2. Build RatingAggregate (emits NewRatingCreated + RatingSubmitted + SelectChargingStation).
+        3. Mark rating as valid.
+        4. Persist rating in SQLite.
+        5. Recalculate and emit StationsAvgRatingUpdated.
+        6. Publish review and emit ReviewPublished + RatingMadeVisibleToUsers.
+        7. Return a DTO for the UI.
         """
-        now = datetime.utcnow()
+        if not self._station_lookup.is_station_in_berlin(station_label):
+            raise StationNotInBerlinError("Station must be in Berlin")
 
-        self._events.publish(
-            SelectChargingStationEvent(now, user_id.value, station_id.value)
+        rating_id = self._repo.next_id()
+        user_id = "user-temporary-id"  # replace with real user id logic later
+
+        # 1–3: create and validate aggregate
+        agg = RatingAggregate.create_new(
+            rating_id=rating_id,
+            user_id=user_id,
+            user_name=user_name,
+            user_email=user_email,
+            station_label=station_label,
+            stars=stars,
+            review_text=review_text,
         )
+        agg.mark_valid(is_valid=True, reason=None)
 
-        self._events.publish(
-            RatingValidatedEvent(now, "pending", True, None)
-        )
+        # 4: persist rating
+        self._repo.save(agg.rating)
+        agg.mark_stored()
 
-        existing = self._repo.get_by_user_and_station(user_id, station_id)
+        # 5: recompute average for this station
+        ratings = self._repo.all_for_station(station_label)
+        new_avg = sum(r.stars.value for r in ratings) / len(ratings)
+        agg.update_station_average(new_avg)
 
-        if existing:
-            rating_id = existing.id
-            rating = Rating(
-                id=rating_id,
-                user_id=user_id,
-                station_id=station_id,
-                stars=stars,
-                text=text,
-                created_at=existing.created_at,
-            )
-        else:
-            rating_id = str(uuid4())
-            rating = Rating(
-                id=rating_id,
-                user_id=user_id,
-                station_id=station_id,
-                stars=stars,
-                text=text,
-                created_at=now,
-            )
-            self._events.publish(
-                NewRatingCreatedEvent(
-                    now,
-                    rating_id=rating_id,
-                    user_id=user_id.value,
-                    station_id=station_id.value,
-                    stars=stars.value,
-                )
-            )
+        # 6: mark review as published
+        agg.publish_review()
 
-        self._events.publish(
-            RatingSubmittedEvent(now, rating_id, user_id.value, station_id.value)
-        )
-
-        saved = self._repo.upsert(rating)
-        self._events.publish(
-            RatingStoredEvent(now, saved.id, station_id.value)
-        )
-
-        avg = self._repo.get_average_for_station(station_id) or stars.value
-        self._events.publish(
-            StationsAvgRatingUpdatedEvent(now, station_id.value, avg)
-        )
-
-        self._events.publish(ReviewPublishedEvent(now, saved.id, station_id.value))
-        self._events.publish(
-            RatingMadeVisibleToUsersEvent(now, saved.id, station_id.value)
-        )
-        return saved
+        # 7: build DTO (UI response)
+        return {
+            "rating_id": agg.rating.rating_id,
+            "station_label": agg.rating.station_label.value,
+            "user_name": agg.rating.name.value,
+            "user_email": agg.rating.email.value,
+            "stars": agg.rating.stars.value,
+            "review_text": agg.rating.review.value,
+            "average_stars": new_avg,
+            "events": agg.events,  # handy for tests; UI may ignore
+        }

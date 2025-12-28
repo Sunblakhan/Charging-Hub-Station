@@ -1,4 +1,4 @@
 from .RatingRepositoryInterface import RatingRepositoryInterface
-from .InMemoryRatingRepository import InMemoryRatingRepository
+from .SqliteRatingRepository import SqliteRatingRepository
 
-__all__ = ["RatingRepositoryInterface", "InMemoryRatingRepository"]
+__all__ = ["RatingRepositoryInterface", "SqliteRatingRepository"]

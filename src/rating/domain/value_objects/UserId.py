@@ -1,10 +1,11 @@
 from dataclasses import dataclass
+from uuid import uuid4
 
 
 @dataclass(frozen=True)
 class UserId:
     value: str
 
-    def __post_init__(self) -> None:
-        if not self.value:
-            raise ValueError("UserId must not be empty")
+    @staticmethod
+    def new() -> "UserId":
+        return UserId(str(uuid4()))

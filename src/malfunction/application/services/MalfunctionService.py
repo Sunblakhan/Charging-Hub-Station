@@ -1,163 +1,62 @@
-from __future__ import annotations
+from uuid import UUID
 
-from datetime import datetime
-from uuid import uuid4
-
-from src.malfunction.domain.entities.Incident import Incident
-from src.malfunction.domain.value_objects.IncidentId import IncidentId
-from src.malfunction.domain.value_objects.ReporterId import ReporterId
-from src.malfunction.domain.value_objects.StationId import StationId
-from src.malfunction.domain.value_objects.IncidentDetails import IncidentDetails
-from src.malfunction.domain.events.MalfunctionReportOpenedEvent import (
-    MalfunctionReportOpenedEvent,
-)
-from src.malfunction.domain.events.DetailsEnteredEvent import DetailsEnteredEvent
-from src.malfunction.domain.events.ReportValidatedAndSubmittedEvent import (
-    ReportValidatedAndSubmittedEvent,
-)
-from src.malfunction.domain.events.ReportNotifiedToAdminAndOperatorEvent import (
-    ReportNotifiedToAdminAndOperatorEvent,
-)
-from src.malfunction.domain.events.ReportPublishedToUsersEvent import (
-    ReportPublishedToUsersEvent,
-)
-from src.malfunction.domain.events.WarningDisplayedToAllUsersEvent import (
-    WarningDisplayedToAllUsersEvent,
-)
-from src.malfunction.domain.events.PointsAwardedToReporterEvent import (
-    PointsAwardedToReporterEvent,
-)
-from src.malfunction.domain.events.SolutionProvidedEvent import SolutionProvidedEvent
-from src.malfunction.domain.events.IssuesStatusUpdateReportEvent import (
-    IssuesStatusUpdateReportEvent,
-)
-from src.malfunction.infrastructure.repositories.IncidentRepositoryInterface import (
-    IncidentRepositoryInterface,
-)
-from src.infrastructure.EventBus import InMemoryEventBus
+from src.malfunction.domain.aggregates import IncidentAggregate
+from src.malfunction.domain.value_objects.Name import Name
+from src.malfunction.domain.value_objects.Email import Email
+from src.malfunction.domain.value_objects.StationLabel import StationLabel
+from src.malfunction.domain.value_objects.ProblemDescription import ProblemDescription
+from src.malfunction.infrastructure.repositories.IncidentRepository import IncidentRepository
 
 
 class MalfunctionService:
-    """Application service for the malfunction report flow."""
+    """
+    Application service orchestrating the malfunction use case.
+    """
 
-    def __init__(
+    def __init__(self, incident_repo: IncidentRepository):
+        self._incident_repo = incident_repo
+
+    def submit_report(
         self,
-        repository: IncidentRepositoryInterface,
-        event_bus: InMemoryEventBus,
-    ) -> None:
-        self._repo = repository
-        self._events = event_bus
-
-    def open_report(
-        self,
-        reporter_id: ReporterId,
-        station_id: StationId,
-        details: IncidentDetails,
-        reporter_is_resident: bool,
-    ) -> Incident:
-        """Persist a new incident and emit all events for opening a report."""
-        now = datetime.utcnow()
-        incident_id = IncidentId(str(uuid4()))
-
-        incident = Incident(
-            id=incident_id.value,
-            reporter_id=reporter_id,
-            station_id=station_id,
-            details=details,
-            status="OPEN",
-            created_at=now,
-        )
-        self._repo.add(incident)
-
-        # Event: report opened
-        self._events.publish(
-            MalfunctionReportOpenedEvent(
-                occurred_at=now,
-                incident_id=incident.id,
-                reporter_id=reporter_id.value,
-                station_id=station_id.value,
-            )
+        reporter_name: str,
+        reporter_email: str,
+        station_label: str,
+        description: str,
+    ) -> UUID:
+        """
+        Create a new incident via aggregate and persist it.
+        """
+        aggregate = IncidentAggregate.open(
+            reporter_name=Name(reporter_name),
+            reporter_email=Email(reporter_email),
+            station_label=StationLabel(station_label),
+            description=ProblemDescription(description),
         )
 
-        # Event: details entered
-        self._events.publish(
-            DetailsEnteredEvent(
-                occurred_at=now,
-                incident_id=incident.id,
-                description=details.description,
-            )
-        )
+        self._incident_repo.save(aggregate.incident)
+        # you could also dispatch aggregate.domain_events here if needed
+        return aggregate.incident.id
 
-        # Simple validation: if we are here, it is considered valid
-        self._events.publish(
-            ReportValidatedAndSubmittedEvent(
-                occurred_at=now,
-                incident_id=incident.id,
-                is_valid=True,
-                reason=None,
-            )
-        )
-
-        # Notify admin and operator (ids are hard-coded placeholders)
-        self._events.publish(
-            ReportNotifiedToAdminAndOperatorEvent(
-                occurred_at=now,
-                incident_id=incident.id,
-                admin_id="admin-1",
-                operator_id="operator-1",
-            )
-        )
-
-        # Publish to users and show warning
-        self._events.publish(
-            ReportPublishedToUsersEvent(
-                occurred_at=now,
-                incident_id=incident.id,
-            )
-        )
-        self._events.publish(
-            WarningDisplayedToAllUsersEvent(
-                occurred_at=now,
-                incident_id=incident.id,
-            )
-        )
-
-        # Optional: award points to resident reporters
-        if reporter_is_resident:
-            self._events.publish(
-                PointsAwardedToReporterEvent(
-                    occurred_at=now,
-                    incident_id=incident.id,
-                    reporter_id=reporter_id.value,
-                    points=10,
-                )
-            )
-
-        return incident
-
-    def provide_solution(self, incident_id: str, solution: str) -> None:
-        """Mark an incident as resolved, persist it, and emit resolution events."""
-        incident = self._repo.get_by_id(IncidentId(incident_id))
+    def validate_report(self, incident_id: UUID) -> None:
+        """
+        Admin verifies report; aggregate enforces 10‑points rule.
+        """
+        incident = self._incident_repo.get_by_id(incident_id)
         if incident is None:
-            return
+            raise ValueError("Incident not found")
 
-        now = datetime.utcnow()
-        incident.status = "RESOLVED"
-        incident.resolved_at = now
-        incident.solution = solution
-        self._repo.add(incident)
+        aggregate = IncidentAggregate(incident=incident)
+        aggregate.validate_report()  # adds 10 points and events
+        self._incident_repo.save(aggregate.incident)
 
-        self._events.publish(
-            SolutionProvidedEvent(
-                occurred_at=now,
-                incident_id=incident.id,
-                solution_description=solution,
-            )
-        )
-        self._events.publish(
-            IssuesStatusUpdateReportEvent(
-                occurred_at=now,
-                incident_id=incident.id,
-                new_status=incident.status,
-            )
-        )
+    def resolve_report(self, incident_id: UUID, solution_text: str) -> None:
+        """
+        Admin/operator resolves the malfunction.
+        """
+        incident = self._incident_repo.get_by_id(incident_id)
+        if incident is None:
+            raise ValueError("Incident not found")
+
+        aggregate = IncidentAggregate(incident=incident)
+        aggregate.resolve(solution_text=solution_text)
+        self._incident_repo.save(aggregate.incident)
