@@ -10,8 +10,9 @@ from src.rating.infrastructure.repositories.SqliteRatingRepository import Sqlite
 
 def show_rating_page(df_lstat):
     """
-    Enhanced UI: Form resets ONLY on successful submission using Dynamic Keys.
-    Auto-fills email from logged-in session.
+    Enhanced UI: 
+    - Auto-fills email.
+    - Hides 'Rate Station' tab completely for Admins AND Operators.
     """
     st.title("⭐ Rate a Charging Station")
     st.markdown("Share your experience to help other EV drivers in Berlin.")
@@ -20,106 +21,114 @@ def show_rating_page(df_lstat):
     user = st.session_state.get('user')
     user_email = user.email if user else ""
 
-    # Initialize a session state counter to manage form resets
+    # Initialize counter
     if "rating_form_id" not in st.session_state:
         st.session_state.rating_form_id = 0
 
-    tab_rate, tab_view = st.tabs(["📝 Rate Station", "📊 View Ratings"])
+    # ------------------------------------------------------------------ #
+    # DYNAMIC TABS LOGIC
+    # ------------------------------------------------------------------ #
+    tab_rate = None
+    tab_view = None
+
+    # --- UPDATED RESTRICTION LOGIC ---
+    # If user is Admin OR Operator, they are restricted to View-Only.
+    if user and user.role in ['admin', 'operator']:
+        # Only ONE tab is created
+        tabs = st.tabs(["📊 View Ratings"])
+        tab_view = tabs[0]
+        
+        # Optional: Show a small info message explaining why
+        if user.role == 'operator':
+            st.info("ℹ️ As a Station Operator, you cannot submit ratings.")
+            
+        # tab_rate remains None
+    else:
+        # Regular Users get BOTH tabs
+        tab_rate, tab_view = st.tabs(["📝 Rate Station", "📊 View Ratings"])
 
     # ------------------------------------------------------------------ #
-    # TAB 1: Rate Station
+    # TAB 1: Rate Station (Only renders if tab_rate exists)
     # ------------------------------------------------------------------ #
-    with tab_rate:
-        st.subheader("Submit your Review")
-        
-        # Station Selection (Strict Berlin Filter)
-        df_berlin_only = df_lstat[
-            df_lstat["station_label"].astype(str).str.contains(r' Berlin\s*$', case=False, regex=True, na=False)
-        ]
-        
-        station_labels = sorted(df_berlin_only["station_label"].unique())
-
-        selected_station = st.selectbox(
-            "Select a Station", 
-            station_labels, 
-            index=None, 
-            placeholder="Search for a station address..."
-        )
-
-        if selected_station:
-            st.info(f"You are rating: **{selected_station}**")
-
-        st.divider()
-
-        # Form Logic
-        with st.form("rating_form", clear_on_submit=False):
+    if tab_rate:
+        with tab_rate:
+            st.subheader("Submit your Review")
             
-            # Helper variable for dynamic keys
-            form_id = st.session_state.rating_form_id
+            # Station Selection (Strict Berlin Filter)
+            df_berlin_only = df_lstat[
+                df_lstat["station_label"].astype(str).str.contains(r' Berlin\s*$', case=False, regex=True, na=False)
+            ]
             
-            col1, col2 = st.columns(2)
-            with col1:
-                # Name is still manual (User object doesn't store Full Name)
-                name = st.text_input("Your Name", placeholder="e.g. Selcan Ipek Ugay", key=f"rate_name_{form_id}")
-            with col2:
-                # --- AUTO-FILL EMAIL ---
-                # We use value=user_email to pre-fill it
-                # We use disabled=True so they can't change it
-                email = st.text_input("Your Email", value=user_email, disabled=True, key=f"rate_email_{form_id}")
+            station_labels = sorted(df_berlin_only["station_label"].unique())
 
-            stars = st_star_rating(
-                label="How was your charging experience?",
-                maxValue=5,
-                defaultValue=3,
-                key=f"rate_stars_{form_id}", 
-                size=30,
-                emoticons=False
+            selected_station = st.selectbox(
+                "Select a Station", 
+                station_labels, 
+                index=None, 
+                placeholder="Search for a station address..."
             )
 
-            review = st.text_area("Write a Review", placeholder="Was it fast? Was it blocked? Let us know...", height=100, key=f"rate_review_{form_id}")
+            if selected_station:
+                st.info(f"You are rating: **{selected_station}**")
 
-            submitted = st.form_submit_button("🚀 Submit Rating", type="primary", use_container_width=True)
+            st.divider()
 
-            if submitted:
-                # --- VALIDATION ---
-                if not selected_station:
-                    st.error("⚠️ Please choose a station above before submitting.")
+            # Form Logic
+            with st.form("rating_form", clear_on_submit=False):
                 
-                # Email validation is less critical now since it comes from login, but good to keep
-                elif "@" not in email or "." not in email:
-                    st.error("⚠️ Invalid email detected.")
+                form_id = st.session_state.rating_form_id
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    name = st.text_input("Your Name", placeholder="e.g. Max Mustermann", key=f"rate_name_{form_id}")
+                with col2:
+                    email = st.text_input("Your Email", value=user_email, disabled=True, key=f"rate_email_{form_id}")
 
-                else:
-                    # --- DATABASE SAVE ---
-                    conn = sqlite3.connect("ratings.db")
-                    repo = SqliteRatingRepository(conn)
-                    station_lookup = RealStationLookup()
-                    service = RatingService(repo, station_lookup)
+                stars = st_star_rating(
+                    label="How was your charging experience?",
+                    maxValue=5,
+                    defaultValue=3,
+                    key=f"rate_stars_{form_id}", 
+                    size=30,
+                    emoticons=False
+                )
 
-                    try:
-                        result = service.create_rating(
-                            user_name=name,
-                            user_email=email,
-                            station_label=selected_station,
-                            stars=stars,
-                            review_text=review if review.strip() else None,
-                        )
-                    except StationNotInBerlinError:
-                        st.error("Selected station is not in Berlin.")
-                    except ValueError as e:
-                        st.error(f"Invalid input: {e}")
+                review = st.text_area("Write a Review", placeholder="Was it fast? Was it blocked? Let us know...", height=100, key=f"rate_review_{form_id}")
+
+                submitted = st.form_submit_button("🚀 Submit Rating", type="primary", use_container_width=True)
+
+                if submitted:
+                    if not selected_station:
+                        st.error("⚠️ Please choose a station above before submitting.")
+                    elif "@" not in email or "." not in email:
+                        st.error("⚠️ Invalid email detected.")
                     else:
-                        # --- SUCCESS ---
-                        st.toast("Rating submitted successfully!", icon="✅")
-                        st.success(f"Thank you! New average: {result['average_stars']:.2f} ⭐")
-                        
-                        # --- INCREMENT ID TO RESET FORM ---
-                        st.session_state.rating_form_id += 1
-                        time.sleep(1.5)
-                        st.rerun()
+                        conn = sqlite3.connect("ratings.db")
+                        repo = SqliteRatingRepository(conn)
+                        station_lookup = RealStationLookup()
+                        service = RatingService(repo, station_lookup)
+
+                        try:
+                            result = service.create_rating(
+                                user_name=name,
+                                user_email=email,
+                                station_label=selected_station,
+                                stars=stars,
+                                review_text=review if review.strip() else None,
+                            )
+                        except StationNotInBerlinError:
+                            st.error("Selected station is not in Berlin.")
+                        except ValueError as e:
+                            st.error(f"Invalid input: {e}")
+                        else:
+                            st.toast("Rating submitted successfully!", icon="✅")
+                            st.success(f"Thank you! New average: {result['average_stars']:.2f} ⭐")
+                            st.session_state.rating_form_id += 1
+                            time.sleep(1.5)
+                            st.rerun()
 
     # ------------------------------------------------------------------ #
-    # TAB 2: View Station Ratings (No changes needed)
+    # TAB 2: View Station Ratings (Always Visible)
     # ------------------------------------------------------------------ #
     with tab_view:
         st.subheader("Station Insights")
