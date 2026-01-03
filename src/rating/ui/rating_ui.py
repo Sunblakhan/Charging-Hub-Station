@@ -1,200 +1,195 @@
-import sqlite3
 import streamlit as st
 import pandas as pd
+import sqlite3
+import time
+from streamlit_star_rating import st_star_rating 
 
 from src.rating.application.services.RatingService import RatingService, StationNotInBerlinError
 from src.rating.application.services.real_station_lookup import RealStationLookup
 from src.rating.infrastructure.repositories.SqliteRatingRepository import SqliteRatingRepository
 
-
 def show_rating_page(df_lstat):
     """
-    Simple UI for submitting a rating.
-    df_lstat is your preprocessed charging-station dataframe (only Berlin rows).
+    Enhanced UI: Form resets ONLY on successful submission using Dynamic Keys.
+    Auto-fills email from logged-in session.
     """
-    st.title("Rate a Charging Station")
+    st.title("⭐ Rate a Charging Station")
+    st.markdown("Share your experience to help other EV drivers in Berlin.")
 
-    section = st.radio(
-        "Select view",
-        ("Rate Station", "View Station Ratings"),
-        horizontal=True,
-    )
+    # 1. Get Logged-in User
+    user = st.session_state.get('user')
+    user_email = user.email if user else ""
+
+    # Initialize a session state counter to manage form resets
+    if "rating_form_id" not in st.session_state:
+        st.session_state.rating_form_id = 0
+
+    tab_rate, tab_view = st.tabs(["📝 Rate Station", "📊 View Ratings"])
 
     # ------------------------------------------------------------------ #
-    # Section 1: Rate Station
+    # TAB 1: Rate Station
     # ------------------------------------------------------------------ #
-    if section == "Rate Station":
-        st.subheader("Submit a Rating")
+    with tab_rate:
+        st.subheader("Submit your Review")
+        
+        # Station Selection (Strict Berlin Filter)
+        df_berlin_only = df_lstat[
+            df_lstat["station_label"].astype(str).str.contains(r' Berlin\s*$', case=False, regex=True, na=False)
+        ]
+        
+        station_labels = sorted(df_berlin_only["station_label"].unique())
 
-        # Build station options from your dataframe (labels end with 'Berlin')
-        station_labels = sorted(df_lstat["station_label"].unique())  # adapt column name
-        selected_station = st.selectbox("Select station", station_labels, placeholder="Choose a station...", index = None)
+        selected_station = st.selectbox(
+            "Select a Station", 
+            station_labels, 
+            index=None, 
+            placeholder="Search for a station address..."
+        )
 
-        name = st.text_input("Name")
-        email = st.text_input("Email")
-        stars = st.slider("Stars", min_value=1, max_value=5, step=1)
-        review = st.text_area("Review (optional)")
+        if selected_station:
+            st.info(f"You are rating: **{selected_station}**")
 
-        if st.button("Submit rating"):
-            # wire up RatingService with SQLite + station lookup
+        st.divider()
 
-            if selected_station is None:
-                st.error("Please choose a station before submitting.")
-                return
+        # Form Logic
+        with st.form("rating_form", clear_on_submit=False):
+            
+            # Helper variable for dynamic keys
+            form_id = st.session_state.rating_form_id
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                # Name is still manual (User object doesn't store Full Name)
+                name = st.text_input("Your Name", placeholder="e.g. Selcan Ipek Ugay", key=f"rate_name_{form_id}")
+            with col2:
+                # --- AUTO-FILL EMAIL ---
+                # We use value=user_email to pre-fill it
+                # We use disabled=True so they can't change it
+                email = st.text_input("Your Email", value=user_email, disabled=True, key=f"rate_email_{form_id}")
 
-            conn = sqlite3.connect("ratings.db")
-            repo = SqliteRatingRepository(conn)
-            station_lookup = RealStationLookup()
-            service = RatingService(repo, station_lookup)
+            stars = st_star_rating(
+                label="How was your charging experience?",
+                maxValue=5,
+                defaultValue=3,
+                key=f"rate_stars_{form_id}", 
+                size=30,
+                emoticons=False
+            )
 
-            try:
-                result = service.create_rating(
-                    user_name=name,
-                    user_email=email,
-                    station_label=selected_station,
-                    stars=stars,
-                    review_text=review if review.strip() else None,
-                )
-            except StationNotInBerlinError:
-                st.error("Selected station is not in Berlin.")
-            except ValueError as e:
-                # from value objects (email, name, stars, etc.)
-                st.error(f"Invalid input: {e}")
-            else:
-                st.success("Rating saved successfully!")
-                st.write(f"Average rating for this station: {result['average_stars']:.2f}")
+            review = st.text_area("Write a Review", placeholder="Was it fast? Was it blocked? Let us know...", height=100, key=f"rate_review_{form_id}")
 
-        # ------------------------------------------------------------------ #
-        # Section 2: View Station Ratings   
-        # ------------------------------------------------------------------ #
-    else:
-        # st.subheader("View Station Ratings")
+            submitted = st.form_submit_button("🚀 Submit Rating", type="primary", use_container_width=True)
 
-        # conn = sqlite3.connect("ratings.db")
-        # repo = SqliteRatingRepository(conn)
+            if submitted:
+                # --- VALIDATION ---
+                if not selected_station:
+                    st.error("⚠️ Please choose a station above before submitting.")
+                
+                # Email validation is less critical now since it comes from login, but good to keep
+                elif "@" not in email or "." not in email:
+                    st.error("⚠️ Invalid email detected.")
 
-        # ratings = repo.all()
+                else:
+                    # --- DATABASE SAVE ---
+                    conn = sqlite3.connect("ratings.db")
+                    repo = SqliteRatingRepository(conn)
+                    station_lookup = RealStationLookup()
+                    service = RatingService(repo, station_lookup)
 
-        # if not ratings:
-        #     st.info("No ratings stored yet.")
-        #     return
+                    try:
+                        result = service.create_rating(
+                            user_name=name,
+                            user_email=email,
+                            station_label=selected_station,
+                            stars=stars,
+                            review_text=review if review.strip() else None,
+                        )
+                    except StationNotInBerlinError:
+                        st.error("Selected station is not in Berlin.")
+                    except ValueError as e:
+                        st.error(f"Invalid input: {e}")
+                    else:
+                        # --- SUCCESS ---
+                        st.toast("Rating submitted successfully!", icon="✅")
+                        st.success(f"Thank you! New average: {result['average_stars']:.2f} ⭐")
+                        
+                        # --- INCREMENT ID TO RESET FORM ---
+                        st.session_state.rating_form_id += 1
+                        time.sleep(1.5)
+                        st.rerun()
 
-        # # Build DataFrame from domain entities
-        # data = []
-        # for r in ratings:
-        #     data.append(
-        #         {
-        #             "Station": r.station_label.value,
-        #             "Name": r.name.value,
-        #             # "Email": r.email.value,
-        #             "Stars": r.stars.value,
-        #             "Review": r.review.value,
-        #             # "Created at": r.created_at.strftime("%Y-%m-%d %H:%M"),
-        #         }
-        #     )
-
-        # df = pd.DataFrame(data)
-
-        # # --- station filter ---
-        # station_options = ["<All stations>"] + sorted(df["Station"].unique())
-        # selected_station = st.selectbox(
-        #     "Filter by station",
-        #     station_options,
-        #     index=0,
-        # )
-
-        # if selected_station != "<All stations>":
-        #     df = df[df["Station"] == selected_station]
-
-        # # --- coloring by stars ---
-        # def color_row(row):
-        #     stars = row["Stars"]
-        #     if stars >= 4:
-        #         return ["background-color: #d4edda"] * len(row)  # green
-        #     elif stars == 3:
-        #         return ["background-color: #fff3cd"] * len(row)  # yellow
-        #     else:
-        #         return ["background-color: #f8d7da"] * len(row)  # light red
-
-        # st.dataframe(df.style.apply(color_row, axis=1))
-
-        st.subheader("View Station Ratings")
+    # ------------------------------------------------------------------ #
+    # TAB 2: View Station Ratings (No changes needed)
+    # ------------------------------------------------------------------ #
+    with tab_view:
+        st.subheader("Station Insights")
 
         conn = sqlite3.connect("ratings.db")
         repo = SqliteRatingRepository(conn)
-
         ratings = repo.all()
 
         if not ratings:
-            st.info("No ratings stored yet.")
+            st.info("📭 No ratings stored yet. Be the first to rate!")
             return
 
-        # Build full ratings DataFrame (one row per rating)
         rows = []
         for r in ratings:
-            rows.append(
-                {
-                    "Station": r.station_label.value,
-                    "Name": r.name.value,
-                    "Stars": r.stars.value,
-                    "Review": r.review.value,
-                }
-            )
+            rows.append({
+                "Station": r.station_label.value,
+                "User": r.name.value,
+                "Rating": r.stars.value,
+                "Review": r.review.value,
+            })
         df_all = pd.DataFrame(rows)
 
-        # --- station filter selectbox ---
-        station_options = ["<All stations>"] + sorted(df_all["Station"].unique())
-        selected_station = st.selectbox(
-            "Choose station",
-            station_options,
-            index=0,
-        )
+        col_filter, col_metric = st.columns([2, 1])
+        
+        with col_filter:
+            station_options = ["All Stations"] + sorted(df_all["Station"].unique())
+            filter_station = st.selectbox("Filter by Station", station_options, index=0)
 
-        # --- case 1: no specific station -> show one row per station with average ---
-        if selected_station == "<All stations>":
+        if filter_station == "All Stations":
             df_avg = (
-                df_all.groupby("Station", as_index=False)["Stars"]
+                df_all.groupby("Station", as_index=False)["Rating"]
                 .mean()
-                .rename(columns={"Stars": "Average Stars"})
+                .rename(columns={"Rating": "Average Stars"})
             )
+            
+            with col_metric:
+                st.metric("Total Reviews", len(df_all), delta="All Time")
 
-            df_avg["Average Stars"] = df_avg["Average Stars"].round(2)
-
-            def color_row_avg(row):
-                avg = row["Average Stars"]
-                if avg >= 4:
-                    return ["background-color: #d4edda"] * len(row)
-                elif avg >= 3:
-                    return ["background-color: #fff3cd"] * len(row)
-                else:
-                    return ["background-color: #f8d7da"] * len(row)
-
-            styled = (
-                df_avg.style
-                .format({"Average Stars": "{:.2f}"})   # 2 decimal places for display
-                .apply(color_row_avg, axis=1)          # numeric comparisons work
+            st.dataframe(
+                df_avg,
+                use_container_width=True,
+                column_config={
+                    "Average Stars": st.column_config.ProgressColumn(
+                        "Average Rating",
+                        format="%.2f",
+                        min_value=1,
+                        max_value=5,
+                    ),
+                },
+                hide_index=True
             )
-
-            st.dataframe(styled)
-
-        # --- case 2: specific station selected -> show avg + all ratings with name/review ---
         else:
-            df_station = df_all[df_all["Station"] == selected_station]
+            df_station = df_all[df_all["Station"] == filter_station]
+            avg_stars = df_station["Rating"].mean()
+            
+            with col_metric:
+                st.metric(label="Station Average", value=f"{avg_stars:.1f} ⭐", delta=f"{len(df_station)} reviews")
 
-            avg_stars = df_station["Stars"].mean()
-
-            st.markdown(f"**Station:** {selected_station}")
-            st.markdown(f"**Average rating:** {avg_stars:.2f} ⭐")
-
-            def color_row_detail(row):
-                stars = row["Stars"]
-                if stars >= 4:
-                    return ["background-color: #d4edda"] * len(row)
-                elif stars == 3:
-                    return ["background-color: #fff3cd"] * len(row)
-                else:
-                    return ["background-color: #f8d7da"] * len(row)
-
-            # only show name, stars, review for individual ratings
-            df_detail = df_station[["Name", "Stars", "Review"]]
-            st.dataframe(df_detail.style.apply(color_row_detail, axis=1))
+            st.dataframe(
+                df_station[["User", "Rating", "Review"]],
+                use_container_width=True,
+                column_config={
+                    "Rating": st.column_config.NumberColumn(
+                        "Stars",
+                        format="%d ⭐"
+                    ),
+                    "Review": st.column_config.TextColumn(
+                        "Comment",
+                        width="large"
+                    )
+                },
+                hide_index=True
+            )

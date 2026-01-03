@@ -106,3 +106,78 @@ class IncidentRepository:
                 points_awarded=row[7],
                 status=row[8],
             )
+            
+    # --- ADD THESE METHODS TO IncidentRepository ---
+
+    # In IncidentRepository.py
+
+    def get_by_station(self, station_label: str):
+        rows = self._conn.execute(
+            """
+            SELECT id, reporter_name, reporter_email, station_label, description,
+                   is_valid, is_solved, points_awarded, status
+            FROM incidents
+            WHERE station_label = ?
+            ORDER BY rowid DESC
+            """,
+            (station_label,)
+        ).fetchall()
+
+        # Convert DB rows back to Incident Objects
+        results = []
+        for row in rows:
+            results.append(Incident(
+                id=UUID(row[0]),
+                reporter_name=Name(row[1]),
+                reporter_email=Email(row[2]),
+                station_label=StationLabel(row[3]),
+                description=ProblemDescription(row[4]),
+                is_valid=bool(row[5]),
+                is_solved=bool(row[6]),
+                points_awarded=row[7],
+                status=row[8],
+            ))
+        return results
+
+    def update_status(self, incident_id: str, is_valid: bool, is_solved: bool) -> None:
+        status_text = "PENDING"
+        if is_solved:
+            status_text = "SOLVED"
+        elif is_valid:
+            status_text = "IN_PROGRESS"
+            
+        self._conn.execute(
+            """
+            UPDATE incidents
+            SET is_valid = ?, is_solved = ?, status = ?
+            WHERE id = ?
+            """,
+            (int(is_valid), int(is_solved), status_text, incident_id)
+        )
+        self._conn.commit()
+        
+    # --- ADD TO IncidentRepository.py ---
+
+    def get_all(self) -> Iterable[Incident]:
+        """Fetches ALL incidents for the Admin view."""
+        rows = self._conn.execute(
+            """
+            SELECT id, reporter_name, reporter_email, station_label, description,
+                   is_valid, is_solved, points_awarded, status
+            FROM incidents
+            ORDER BY rowid DESC
+            """
+        ).fetchall()
+
+        for row in rows:
+            yield Incident(
+                id=UUID(row[0]),
+                reporter_name=Name(row[1]),
+                reporter_email=Email(row[2]),
+                station_label=StationLabel(row[3]),
+                description=ProblemDescription(row[4]),
+                is_valid=bool(row[5]),
+                is_solved=bool(row[6]),
+                points_awarded=row[7],
+                status=row[8],
+            )

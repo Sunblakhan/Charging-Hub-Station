@@ -4,7 +4,7 @@ from uuid import UUID
 
 import streamlit as st
 import pandas as pd
-
+import time
 from src.malfunction.application.services.MalfunctionService import MalfunctionService
 from src.malfunction.infrastructure.repositories.IncidentRepository import IncidentRepository
 
@@ -46,130 +46,152 @@ def _get_malfunction_service() -> MalfunctionService:
 
 
 def show_malfunction_page(df_lstat):
-    """
-    Streamlit UI for malfunction reporting and admin-approved list.
-    df_lstat: original charging-stations dataframe to build station labels.
-    """
-    st.title("Charging Station Malfunction")
+    st.title("🔧 Malfunction Management")
 
+    # 1. Get current user and service
+    user = st.session_state.get('user')
     service = _get_malfunction_service()
 
-    station_options = sorted(df_lstat["station_label"].unique())  # adapt column name
-
-    service = _get_malfunction_service()
-
-
-    # ------------------------------------------------------------------ #
-    # Radio: choose section
-    # ------------------------------------------------------------------ #
-    section = st.radio(
-        "Select view",
-        ("Report malfunction", "Malfunction list"),
-        horizontal=True
-    )
-
-    # ------------------------------------------------------------------ #
-    # Section 1: Report malfunction
-    # ------------------------------------------------------------------ #
-    if section == "Report malfunction":
-        st.subheader("Submit malfunction report")
-
-        with st.form("malfunction_form"):
-            name = st.text_input("Name")
-            email = st.text_input("Email")
-            station = st.selectbox(
-                "Select station",
-                station_options,
-                placeholder="Choose a station...",
-                index=None,
-            )
-            description = st.text_area("Problem of the station")
-
-            submitted = st.form_submit_button("Submit report")
-
-        if submitted:
-            try:
-                incident_id = service.submit_report(
-                    reporter_name=name,
-                    reporter_email=email,
-                    station_label=station,
-                    description=description,
-                )
-                st.success(f"Report submitted. Incident ID: {incident_id}")
-            except Exception as e:
-                st.error(f"Could not submit report: {e}")
-
-    # ------------------------------------------------------------------ #
-    # Section 2: Malfunction list (admin side)
-    # ------------------------------------------------------------------ #
-    else:
-        # st.subheader("Approved malfunctions")
-
-        # approve_id_str = st.text_input("Incident ID to approve (admin)")
-        # if st.button("Approve report"):
-        #     try:
-        #         service.validate_report(UUID(approve_id_str))
-        #         st.success("Report approved and published.")
-        #     except Exception as e:
-        #         st.error(f"Could not approve report: {e}")
-
-        # conn = _get_db_connection()
-        # df_valid = _load_valid_incidents(conn)
-        # if df_valid.empty:
-        #     st.info("No approved malfunctions yet.")
-        # else:
-        #     st.dataframe(df_valid)
-
-
-        conn = _get_db_connection()
-
-        # Load all reports (or only valid ones, as you prefer)
-        df = pd.read_sql_query(
-            """
-            SELECT id,
-                reporter_name,
-                reporter_email,
-                station_label,
-                description,
-                is_valid,
-                is_solved,
-                points_awarded,
-                status
-            FROM incidents
-            WHERE is_valid = 1
-            ORDER BY rowid DESC
-            """,
-            conn,
-        )
-
-        st.write("Number of incidents:", len(df))
-
-
-        if df.empty:
-            st.info("No malfunction history found.")
+    # =========================================================================
+    # VIEW A: MANAGEMENT MODE (For Operators AND Admins)
+    # =========================================================================
+    if user and (user.role == 'operator' or user.role == 'admin'):
+        
+        # --- HEADER & DATA FETCHING ---
+        if user.role == 'admin':
+            st.info("🛡️ **Admin Mode:** Viewing all malfunction reports across Berlin.")
+            incidents = service.get_all_incidents()
         else:
-            # start from original df
-            df_view = df.copy()
+            # Operator Logic
+            if not user.station_label:
+                st.error("Operator has no assigned station. Contact Admin.")
+                return
+            st.info(f"👤 **Operator Mode:** Managing reports for **{user.station_label}**")
+            incidents = service.get_incidents_for_station(user.station_label)
 
-            # create nicely named columns from the originals
-            df_view["Station"] = df_view["station_label"]
-            df_view["Description"] = df_view["description"]
-            df_view["Solved"] = df_view["is_solved"].astype(bool)
+        # Create Tabs
+        tab_manage, tab_report = st.tabs(["📋 Manage Reports", "➕ Submit New Report"])
 
-            # now choose only the renamed columns to display
-            cols_to_show = ["Station", "Description", "Solved"]
-            df_view = df_view[cols_to_show]
+        # --- TAB 1: MANAGE REPORTS (Editable Table) ---
+        with tab_manage:
+            if not incidents:
+                st.info("No reports found.")
+            else:
+                # Prepare Data for Table
+                data = []
+                for inc in incidents:
+                    data.append({
+                        "ID": str(inc.id),
+                        "Station": inc.station_label.value, # Helpful for Admin to see which station
+                        "Reporter": inc.reporter_name.value,
+                        "Description": inc.description.value,
+                        "Valid?": inc.is_valid,
+                        "Solved?": inc.is_solved,
+                        "Status": inc.status
+                    })
+                
+                df_incidents = pd.DataFrame(data)
 
-            def color_rows(row):
-                # here row["Solved"] is bool
-                if row["Solved"]:
-                    return ["background-color: lightgreen"] * len(row)
+                st.caption("Tick the boxes to update status. Click 'Save Changes' to apply.")
+                
+                # Configure Columns (Show Station column only if Admin)
+                col_config = {
+                        "ID": st.column_config.TextColumn(disabled=True),
+                        "Station": st.column_config.TextColumn(disabled=True, width="medium"),
+                        "Reporter": st.column_config.TextColumn(disabled=True),
+                        "Description": st.column_config.TextColumn(disabled=True, width="large"),
+                        "Valid?": st.column_config.CheckboxColumn("Valid?", help="Is this a real issue?"),
+                        "Solved?": st.column_config.CheckboxColumn("Solved?", help="Is it fixed?"),
+                        "Status": st.column_config.TextColumn(disabled=True),
+                }
+
+                edited_df = st.data_editor(
+                    df_incidents,
+                    column_config=col_config,
+                    hide_index=True,
+                    key="malfunction_editor"
+                )
+
+                if st.button("💾 Save Changes", type="primary"):
+                    for index, row in edited_df.iterrows():
+                        service.update_incident_status(
+                            incident_id=row["ID"],
+                            is_valid=row["Valid?"],
+                            is_solved=row["Solved?"]
+                        )
+                    st.success("✅ Database updated successfully!")
+                    time.sleep(1)
+                    st.rerun()
+
+        # --- TAB 2: SUBMIT NEW REPORT ---
+        with tab_report:
+            st.subheader("Submit Internal Report")
+            with st.form("internal_report_form"):
+                name = st.text_input("Reporter Name", value="Admin" if user.role == 'admin' else "Operator") 
+                email = st.text_input("Reporter Email", value=user.email, disabled=True)
+                
+                # If Admin, allow selecting ANY station. If Operator, lock to theirs.
+                if user.role == 'admin':
+                    # Filter Berlin stations for dropdown
+                    df_berlin = df_lstat[df_lstat["station_label"].astype(str).str.contains(r' Berlin\s*$', case=False, regex=True, na=False)]
+                    admin_station_options = sorted(df_berlin["station_label"].unique())
+                    station_input = st.selectbox("Select Station", admin_station_options)
                 else:
-                    return ["background-color: Khaki"] * len(row)
+                    # Lock for Operator
+                    station_input = st.text_input("Station", value=user.station_label, disabled=True)
+                
+                description = st.text_area("Problem description")
+                submitted = st.form_submit_button("Submit Report")
 
-            styled = df_view.style.apply(color_rows, axis=1)
+            if submitted:
+                try:
+                    # For operators, station_input is just the string. For admin selectbox, it's the same.
+                    final_station = station_input if user.role == 'admin' else user.station_label
+                    
+                    incident_id = service.submit_report(name, email, final_station, description)
+                    st.success(f"Report submitted! ID: {incident_id}")
+                    time.sleep(1.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
-            st.dataframe(styled, use_container_width=True)
+    # =========================================================================
+    # VIEW B: PUBLIC USER (Report Only)
+    # =========================================================================
+    else:
+        # Standard Public View Logic
+        df_berlin = df_lstat[df_lstat["station_label"].astype(str).str.contains(r' Berlin\s*$', case=False, regex=True, na=False)]
+        station_options = sorted(df_berlin["station_label"].unique())
+
+        section = st.radio("Select view", ("Report malfunction", "Malfunction list"), horizontal=True)
+
+        if section == "Report malfunction":
+            st.subheader("Submit malfunction report")
+            with st.form("malfunction_form"):
+                name = st.text_input("Name")
+                email = st.text_input("Email")
+                station = st.selectbox("Select station", station_options, index=None, placeholder="Choose...")
+                description = st.text_area("Problem description")
+                submitted = st.form_submit_button("Submit report")
+
+            if submitted:
+                try:
+                    incident_id = service.submit_report(name, email, station, description)
+                    st.success(f"Report submitted! ID: {incident_id}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        else: 
+            st.subheader("Current Issues")
+            conn = _get_db_connection()
+            df = pd.read_sql_query(
+                "SELECT station_label as Station, description as Description FROM incidents WHERE is_valid=1 AND is_solved=0", 
+                conn
+            )
+            if df.empty:
+                st.info("No active malfunctions reported.")
+            else:
+                st.dataframe(df, use_container_width=True)
 
 
 
