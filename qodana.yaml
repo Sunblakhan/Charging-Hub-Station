@@ -1,0 +1,9 @@
+version: "1.0"
+
+profile:
+  name: qodana.starter
+
+linter: jetbrains/qodana-python:2025.2
+
+bootstrap: |
+  pip install -r requirements.txt

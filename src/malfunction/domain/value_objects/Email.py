@@ -1,9 +1,7 @@
 from dataclasses import dataclass
 import re
 
-
-class InvalidEmail(Exception):
-    pass
+from src.malfunction.domain.exceptions import InvalidEmail
 
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

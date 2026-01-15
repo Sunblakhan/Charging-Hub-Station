@@ -4,7 +4,11 @@ import sqlite3
 import time
 from streamlit_star_rating import st_star_rating 
 
-from src.rating.application.services.RatingService import RatingService, StationNotInBerlinError
+from src.rating.application.services.RatingService import (
+    RatingService,
+    DuplicateRatingError,
+    StationNotInBerlinError,
+)
 from src.rating.application.services.real_station_lookup import RealStationLookup
 from src.rating.infrastructure.repositories.SqliteRatingRepository import SqliteRatingRepository
 
@@ -19,7 +23,7 @@ def show_rating_page(df_lstat):
 
     # 1. Get Logged-in User
     user = st.session_state.get('user')
-    user_email = user.email if user else ""
+    user_email = user.email.value if user else ""
 
     # Initialize counter
     if "rating_form_id" not in st.session_state:
@@ -29,7 +33,6 @@ def show_rating_page(df_lstat):
     # DYNAMIC TABS LOGIC
     # ------------------------------------------------------------------ #
     tab_rate = None
-    tab_view = None
 
     # --- UPDATED RESTRICTION LOGIC ---
     # If user is Admin OR Operator, they are restricted to View-Only.
@@ -116,6 +119,8 @@ def show_rating_page(df_lstat):
                                 stars=stars,
                                 review_text=review if review.strip() else None,
                             )
+                        except DuplicateRatingError:
+                            st.warning("You've already rated this station. Thanks for your feedback!")
                         except StationNotInBerlinError:
                             st.error("Selected station is not in Berlin.")
                         except ValueError as e:

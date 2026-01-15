@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 
-
-class InvalidStationLabel(Exception):
-    pass
+from src.malfunction.domain.exceptions import InvalidStationLabel
 
 
 @dataclass(frozen=True)

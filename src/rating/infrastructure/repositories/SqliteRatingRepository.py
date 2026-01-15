@@ -129,3 +129,16 @@ class SqliteRatingRepository(RatingRepositoryInterface):
                 )
             )
         return ratings
+
+    def exists_for_user_and_station(self, user_email: str, station_label: str) -> bool:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT 1
+            FROM ratings
+            WHERE email = ? AND station_label = ?
+            LIMIT 1
+            """,
+            (user_email, station_label),
+        )
+        return cur.fetchone() is not None

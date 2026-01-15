@@ -9,14 +9,22 @@ currentWorkingDirectory = os.path.dirname(os.path.abspath(__file__))
 os.chdir(currentWorkingDirectory)
 
 # --- LOCAL IMPORTS ---
-from core import methods as m1
-from core import HelperTools as ht
 from config import pdict
 from src.malfunction.ui.malfunction_ui import show_malfunction_page, has_open_malfunctions
+from src.rating.infrastructure.data_prep.geo_prep import (
+    count_plz_by_kw,
+    count_plz_occurrences,
+    preprop_lstat,
+    preprop_resid,
+)
+from src.rating.ui.heatmaps import make_streamlit_electric_charging_resid
 from src.rating.ui.rating_ui import show_rating_page
+from src.shared.utils.timing import timer
 
 # --- AUTH IMPORTS ---
-from src.auth.auth_handler import AuthHandler
+from src.shared.auth.application.services.AuthService import AuthService
+from src.shared.auth.application.services.UserService import UserService
+from src.shared.auth.infrastructure.repositories.UserRepository import SqliteUserRepository
 
 # -----------------------------------------------------------------------------
 # UI CONFIGURATION & STYLING
@@ -92,11 +100,11 @@ def setup_style():
 # -----------------------------------------------------------------------------
 # HELPER: Admin Panel UI 
 # -----------------------------------------------------------------------------
-def render_admin_panel(auth):
+def render_admin_panel(user_service):
     st.title("🛡️ Admin Dashboard")
     
     # 1. Get Data
-    pending_users = auth.get_pending_operators()
+    pending_users = user_service.get_pending_operators()
     count = len(pending_users)
 
     # 2. Header Stats (Cleaner than st.metric)
@@ -171,7 +179,7 @@ def render_admin_panel(auth):
                 
                 # APPROVE
                 if st.button("✓ Approve", key=f"app_{email}", type="primary", use_container_width=True):
-                    if auth.approve_operator(email):
+                    if user_service.approve_operator(email):
                         st.toast(f"✅ Approved {email}!")
                         time.sleep(1)
                         st.rerun()
@@ -180,14 +188,14 @@ def render_admin_panel(auth):
 
                 # REJECT (Added a tiny margin-top via markdown if needed, but standard stacking usually looks good)
                 if st.button("✕ Reject", key=f"rej_{email}", use_container_width=True):
-                    if auth.reject_operator(email):
+                    if user_service.reject_operator(email):
                         st.toast(f"🗑️ Rejected {email}")
                         time.sleep(1)
                         st.rerun()
 # -----------------------------------------------------------------------------
 # MAIN APP
 # -----------------------------------------------------------------------------
-@ht.timer
+@timer
 def main():
     st.set_page_config(
         page_title="Berlin Charging Hub Portal", 
@@ -199,8 +207,10 @@ def main():
     # Inject CSS
     setup_style()
     
-    # Initialize Auth Handler
-    auth = AuthHandler()
+    # Initialize services with shared repository
+    user_repo = SqliteUserRepository()
+    auth = AuthService(user_repo)
+    user_service = UserService(user_repo)
 
     # --- 1. SESSION STATE INITIALIZATION -------------------------------------
     if 'user' not in st.session_state:
@@ -226,14 +236,14 @@ def main():
                     submitted_login = st.form_submit_button("Sign In", type="primary", use_container_width=True)
                     
                     if submitted_login:
-                        user, msg = auth.login(email, password)
-                        if user:
+                        try:
+                            user = auth.login(email, password)
                             st.session_state['user'] = user
                             st.toast("Login successful!", icon="✅")
                             time.sleep(0.5)
                             st.rerun()
-                        else:
-                            st.error(msg)
+                        except Exception as e:
+                            st.error(str(e))
 
             # --- TAB 2: SIGN UP ---
             with tab_signup:
@@ -305,20 +315,19 @@ def main():
                         st.error("❌ You must select a station to sign up as an Operator.")
                         
                     else:
-                        success, msg = auth.signup(new_email, new_pass, role=role_choice, station_label=selected_station)
-                        
-                        if success:
+                        try:
+                            auth.signup(new_email, new_pass, role_str=role_choice, station_label=selected_station)
                             if role_choice == 'user':
                                 st.success("✅ Account created! Please switch to the Login tab.")
                             else:
                                 st.warning("⏳ Account created! Waiting for Admin approval.")
-                            
+
                             # --- RESET FIELDS ---
                             st.session_state.signup_form_id += 1
                             time.sleep(1.5)
                             st.rerun()
-                        else:
-                            st.error(f"⚠️ {msg}")
+                        except Exception as e:
+                            st.error(f"⚠️ {str(e)}")
                             
         return  # Stop execution here
 
@@ -336,11 +345,11 @@ def main():
             margin-bottom: 20px;
             text-align: center;">
             <div style="font-size: 32px; margin-bottom: 8px;">👤</div>
-            <div style="font-weight: 700; color: #212529; word-break: break-all;">{current_user.email}</div>
+            <div style="font-weight: 700; color: #212529; word-break: break-all;">{current_user.email.value}</div>
             <div style="
                 display: inline-block;
                 margin-top: 8px;
-                background-color: {'#2e7d32' if current_user.role == 'admin' else '#1565c0'};
+                background-color: {'#2e7d32' if current_user.role.value == 'admin' else '#1565c0'};
                 color: white;
                 padding: 4px 12px;
                 border-radius: 12px;
@@ -348,7 +357,7 @@ def main():
                 text-transform: uppercase;
                 letter-spacing: 1px;
                 font-weight: 600;">
-                {current_user.role}
+                {current_user.role.value}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -372,7 +381,7 @@ def main():
     # A) ADMIN PANEL
     if page_selection == "Admin Panel":
         if current_user.role == "admin":
-            render_admin_panel(auth)
+            render_admin_panel(user_service)
         else:
             st.error("⛔ Access Denied")
 
@@ -388,14 +397,14 @@ def main():
         df_lstat = pd.read_csv(os.path.join("datasets", pdict["file_lstations"]), sep=';', encoding='utf-8', header=0)
         
         # Process Data
-        df_lstat2 = m1.preprop_lstat(df_lstat, df_geodat_plz, pdict)
-        gdf_lstat3 = m1.count_plz_occurrences(df_lstat2)
-        gdf_lstat3_kw = m1.count_plz_by_kw(df_lstat2)    
+        df_lstat2 = preprop_lstat(df_lstat, df_geodat_plz, pdict)
+        gdf_lstat3 = count_plz_occurrences(df_lstat2)
+        gdf_lstat3_kw = count_plz_by_kw(df_lstat2)    
         df_residents = pd.read_csv(os.path.join("datasets", pdict["file_residents"]), encoding='latin-1')
-        gdf_residents2 = m1.preprop_resid(df_residents, df_geodat_plz, pdict)
+        gdf_residents2 = preprop_resid(df_residents, df_geodat_plz, pdict)
         
         # Render Map
-        m1.make_streamlit_electric_Charging_resid(gdf_lstat3, gdf_residents2, gdf_lstat3_kw)
+        make_streamlit_electric_charging_resid(gdf_lstat3, gdf_residents2, gdf_lstat3_kw)
 
     # C) RATINGS
     elif page_selection == "Ratings":

@@ -36,6 +36,24 @@ class IncidentRepository:
         )
         self._conn.commit()
 
+    @staticmethod
+    def _row_to_incident(row: tuple) -> Incident:
+        """
+        DRY: Convert database row to Incident entity.
+        Eliminates code duplication across all query methods.
+        """
+        return Incident(
+            id=UUID(row[0]),
+            reporter_name=Name(row[1]),
+            reporter_email=Email(row[2]),
+            station_label=StationLabel(row[3]),
+            description=ProblemDescription(row[4]),
+            is_valid=bool(row[5]),
+            is_solved=bool(row[6]),
+            points_awarded=row[7],
+            status=row[8],
+        )
+
     def save(self, incident: Incident) -> None:
         self._conn.execute(
             """
@@ -72,17 +90,7 @@ class IncidentRepository:
         if row is None:
             return None
 
-        return Incident(
-            id=UUID(row[0]),
-            reporter_name=Name(row[1]),
-            reporter_email=Email(row[2]),
-            station_label=StationLabel(row[3]),
-            description=ProblemDescription(row[4]),
-            is_valid=bool(row[5]),
-            is_solved=bool(row[6]),
-            points_awarded=row[7],
-            status=row[8],
-        )
+        return IncidentRepository._row_to_incident(row)
 
     def list_pending(self) -> Iterable[Incident]:
         rows = self._conn.execute(
@@ -95,17 +103,7 @@ class IncidentRepository:
         ).fetchall()
 
         for row in rows:
-            yield Incident(
-                id=UUID(row[0]),
-                reporter_name=Name(row[1]),
-                reporter_email=Email(row[2]),
-                station_label=StationLabel(row[3]),
-                description=ProblemDescription(row[4]),
-                is_valid=bool(row[5]),
-                is_solved=bool(row[6]),
-                points_awarded=row[7],
-                status=row[8],
-            )
+            yield IncidentRepository._row_to_incident(row)
             
     # --- ADD THESE METHODS TO IncidentRepository ---
 
@@ -124,20 +122,7 @@ class IncidentRepository:
         ).fetchall()
 
         # Convert DB rows back to Incident Objects
-        results = []
-        for row in rows:
-            results.append(Incident(
-                id=UUID(row[0]),
-                reporter_name=Name(row[1]),
-                reporter_email=Email(row[2]),
-                station_label=StationLabel(row[3]),
-                description=ProblemDescription(row[4]),
-                is_valid=bool(row[5]),
-                is_solved=bool(row[6]),
-                points_awarded=row[7],
-                status=row[8],
-            ))
-        return results
+        return [IncidentRepository._row_to_incident(row) for row in rows]
 
     def update_status(self, incident_id: str, is_valid: bool, is_solved: bool) -> None:
         status_text = "PENDING"
@@ -170,14 +155,4 @@ class IncidentRepository:
         ).fetchall()
 
         for row in rows:
-            yield Incident(
-                id=UUID(row[0]),
-                reporter_name=Name(row[1]),
-                reporter_email=Email(row[2]),
-                station_label=StationLabel(row[3]),
-                description=ProblemDescription(row[4]),
-                is_valid=bool(row[5]),
-                is_solved=bool(row[6]),
-                points_awarded=row[7],
-                status=row[8],
-            )
+            yield IncidentRepository._row_to_incident(row)

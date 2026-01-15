@@ -64,7 +64,7 @@ class IncidentAggregate:
         old_status = self.incident.status
 
         self.incident.is_valid = True
-        self.incident.status = "PUBLISHED"
+        self.incident.status = "IN_PROGRESS"
         self.incident.points_awarded += points_for_report
 
         now = datetime.now(UTC)
@@ -118,7 +118,7 @@ class IncidentAggregate:
 
         old_status = self.incident.status
         self.incident.is_solved = True
-        self.incident.status = "RESOLVED"
+        self.incident.status = "SOLVED"
 
         now = datetime.now(UTC)
 

@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 
-
-class InvalidProblemDescription(Exception):
-    pass
+from src.malfunction.domain.exceptions import InvalidProblemDescription
 
 
 @dataclass(frozen=True)

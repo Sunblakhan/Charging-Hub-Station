@@ -1,0 +1,1 @@
+"""Auth shared kernel module."""

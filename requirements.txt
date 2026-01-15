@@ -1,3 +1,4 @@
+pytest
 pandas
 geopandas
 shapely
@@ -10,4 +11,6 @@ dash
 streamlit
 streamlit_folium
 Folium
+branca
 st-star-rating
+flet

@@ -5,7 +5,6 @@ Ensures the project root is on sys.path so that imports like
 `from src.domain.value_objects import ...` work in all test files.
 """
 
-import os
 import sys
 from pathlib import Path
 

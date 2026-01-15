@@ -1,7 +1,6 @@
 import os
 import time
 import sqlite3
-from uuid import UUID
 
 import streamlit as st
 import pandas as pd
@@ -48,8 +47,6 @@ def show_malfunction_page(df_lstat):
     if user and (user.role == 'operator' or user.role == 'admin'):
         
         # --- 1. SETUP DATA & TABS ---
-        incidents = []
-        tab_manage = None
         tab_report = None
 
         if user.role == 'admin':
@@ -99,6 +96,7 @@ def show_malfunction_page(df_lstat):
                 }
 
                 st.caption("Tick the boxes to update status.")
+                st.info("ℹ️ **Admin Rule:** You must validate a report before marking it as solved.")
                 edited_df = st.data_editor(
                     df_incidents,
                     column_config=col_config,
@@ -107,15 +105,40 @@ def show_malfunction_page(df_lstat):
                 )
 
                 if st.button("💾 Save Changes", type="primary"):
+                    errors = []
+                    updates_made = 0
+                    
+                    # Compare edited_df with original df_incidents to find changes
                     for index, row in edited_df.iterrows():
-                        service.update_incident_status(
-                            incident_id=row["ID"],
-                            is_valid=row["Valid?"],
-                            is_solved=row["Solved?"]
-                        )
-                    st.toast("Updated successfully!", icon="✅")
-                    time.sleep(1)
-                    st.rerun()
+                        original_row = df_incidents.iloc[index]
+                        
+                        # Check if this row was actually changed
+                        if (row["Valid?"] != original_row["Valid?"] or 
+                            row["Solved?"] != original_row["Solved?"]):
+                            
+                            try:
+                                # Business rule: Cannot mark solved without valid
+                                if row["Solved?"] and not row["Valid?"]:
+                                    errors.append(f"Row {index + 1}: Cannot mark as solved without validating first")
+                                    continue
+                                
+                                service.update_incident_status(
+                                    incident_id=row["ID"],
+                                    is_valid=row["Valid?"],
+                                    is_solved=row["Solved?"]
+                                )
+                                updates_made += 1
+                            except ValueError as e:
+                                errors.append(f"Row {index + 1}: {str(e)}")
+                    
+                    if errors:
+                        st.error("⚠️ Errors occurred:\n" + "\n".join(errors))
+                    elif updates_made > 0:
+                        st.toast(f"Updated {updates_made} report(s) successfully!", icon="✅")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.info("No changes detected.")
 
         # --- 3. TAB: SUBMIT REPORT (Operator Only) ---
         if tab_report:
@@ -124,23 +147,24 @@ def show_malfunction_page(df_lstat):
                 st.caption("Reports submitted by operators are automatically marked as **Valid**.")
                 
                 with st.form("operator_report_form"):
-                    name = st.text_input("Reporter Name", value="Operator") 
-                    email = st.text_input("Reporter Email", value=user.email, disabled=True)
+                    name = st.text_input("Reporter Name", placeholder="e.g. Max Mustermann", value="Operator") 
+                    email = st.text_input("Reporter Email", value=user.email.value, disabled=True)
                     st.text_input("Station", value=user.station_label, disabled=True)
-                    description = st.text_area("Problem description")
+                    description = st.text_area("Problem description", placeholder="What issues did you spot in this particular station?")
                     
                     submitted = st.form_submit_button("Submit Report")
 
                 if submitted:
                     try:
                         # Auto-Validate: Pass is_valid=True
-                        incident_id = service.submit_report(
+                        result = service.submit_report(
                             reporter_name=name, 
                             reporter_email=email, 
                             station_label=user.station_label, 
                             description=description,
                             is_valid=True 
                         )
+                        incident_id = result.get('incident_id')
                         st.success(f"Report submitted and validated! ID: {incident_id}")
                         time.sleep(1.5)
                         st.rerun()
@@ -160,16 +184,17 @@ def show_malfunction_page(df_lstat):
         if section == "Report malfunction":
             st.subheader("Submit malfunction report")
             with st.form("malfunction_form"):
-                name = st.text_input("Name")
-                email = st.text_input("Email")
+                name = st.text_input("Name", placeholder="e.g. Max Mustermann")
+                email = st.text_input("Email", value=user.email.value, disabled=True)
                 station = st.selectbox("Select station", station_options, index=None, placeholder="Choose...")
-                description = st.text_area("Problem description")
+                description = st.text_area("Problem description", placeholder="What issues did you spot in this particular station?")
                 submitted = st.form_submit_button("Submit report")
 
             if submitted:
                 try:
                     # Regular user -> is_valid=False (default)
-                    incident_id = service.submit_report(name, email, station, description)
+                    result = service.submit_report(name, email, station, description)
+                    incident_id = result.get('incident_id')
                     st.success(f"Report submitted! ID: {incident_id}")
                 except Exception as e:
                     st.error(f"Error: {e}")

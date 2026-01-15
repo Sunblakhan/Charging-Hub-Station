@@ -23,3 +23,8 @@ class RatingRepositoryInterface(ABC):
     def all_for_station(self, station_label: str) -> List[Rating]:
         """Return all ratings stored for the given station."""
         ...
+
+    @abstractmethod
+    def exists_for_user_and_station(self, user_email: str, station_label: str) -> bool:
+        """Return True if the user already rated the station (prevents duplicates)."""
+        ...

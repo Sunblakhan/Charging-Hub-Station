@@ -2,14 +2,11 @@
 from typing import Dict, Any
 
 from src.rating.domain.aggregates.RatingAggregate import RatingAggregate
+from src.rating.domain.exceptions import DuplicateRatingError, StationNotInBerlinError
 from src.rating.infrastructure.repositories.RatingRepositoryInterface import (
     RatingRepositoryInterface,
 )
 from src.rating.application.services.station_lookup import StationLookupInterface
-
-
-class StationNotInBerlinError(Exception):
-    pass
 
 
 class RatingService:
@@ -44,7 +41,7 @@ class RatingService:
         7. Return a DTO for the UI.
         """
         if not self._station_lookup.is_station_in_berlin(station_label):
-            raise StationNotInBerlinError("Station must be in Berlin")
+            raise StationNotInBerlinError(station_label)
 
         rating_id = self._repo.next_id()
         user_id = "user-temporary-id"  # replace with real user id logic later
@@ -59,6 +56,15 @@ class RatingService:
             stars=stars,
             review_text=review_text,
         )
+
+        if self._repo.exists_for_user_and_station(
+            agg.rating.email.value, agg.rating.station_label.value
+        ):
+            raise DuplicateRatingError(
+                user_email=agg.rating.email.value,
+                station_label=agg.rating.station_label.value,
+            )
+
         agg.mark_valid(is_valid=True, reason=None)
 
         # 4: persist rating
