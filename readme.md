@@ -56,7 +56,57 @@ Run the domain suites:
 pytest tests/src/rating/ -v
 pytest tests/src/malfunction/ -v
 ```
+## Architecture & Design Diagrams
 
+### Use Case Diagram
+![Use Case Diagram](images/use_case.png)
+
+
+<table>
+  <tr>
+    <th>Event Storming</th>
+    <th>Bounded Context</th>
+  </tr>
+  <tr>
+    <td>
+      <img src="images/event_stroming.png" alt="Event Storming" width="100%">
+    </td>
+    <td>
+      <img src="images/bounded_context.png" alt="Bounded Context" width="100%">
+    </td>
+  </tr>
+</table>
+
+<!-- ### Architecture Overview
+![Architecture](images/Architecture.png) -->
+
+---
+
+### Malfunction Context
+
+**Flow Chart:**
+![Malfunction Flow Chart](images/malfunction_flowchart.png)
+
+**Sequence Diagram:**
+![Malfunction Sequence](images/malfunction_sequence.jpeg)
+
+**DDD Diagram:**
+![Malfunction DDD](images/malfunction_ddd.png)
+
+---
+
+### Rating Context
+
+**Flow Chart:**
+![Rating Flow Chart](images/rating_flowchart.png)
+
+**Sequence Diagram:**
+![Rating Sequence](images/rating_sequence.jpeg)
+
+**DDD Diagram:**
+![Rating DDD](images/rating_ddd.png)
+
+---
 ## Notes
 - Only Berlin stations are exposed to users for rating/reporting (regex filter on station labels ending in “Berlin”).
 - Datasets ship with the repo; no external APIs are required for the core flows.
