@@ -3,5 +3,6 @@ class StationLookupInterface:
         """
         Return True if the given station label represents a Berlin station.
         Concrete implementations (real or fake) must override this.
+        This is a fake lookup to do testing without modifying existing code
         """
         raise NotImplementedError
