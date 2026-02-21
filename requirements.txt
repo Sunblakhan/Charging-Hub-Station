@@ -8,9 +8,8 @@ matplotlib
 seaborn
 plotly
 dash
-streamlit
+streamlit>=1.32.0
 streamlit_folium
-Folium
+folium
 branca
 st-star-rating
-flet
