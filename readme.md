@@ -2,6 +2,8 @@
 
 Streamlit portal for exploring Berlin EV charging infrastructure, reporting malfunctions, and rating stations. The app combines geospatial heatmaps, crowdsourced ratings, and operator/admin workflows on top of lightweight SQLite storage.
 
+[Live Demo] https://charging-app-station.streamlit.app/
+
 ## Features
 - Berlin charging heatmap with resident density and station power filters.
 - Ratings hub for logged-in users; operators and admins are view-only.
